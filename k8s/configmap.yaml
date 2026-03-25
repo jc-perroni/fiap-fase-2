@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: services-config
+  namespace: feature-flags
+data:
+  # URLs internas entre serviços (DNS do Kubernetes: <service>.<namespace>.svc.cluster.local)
+  AUTH_SERVICE_URL: "http://auth-service.feature-flags.svc.cluster.local:8001"
+  FLAG_SERVICE_URL: "http://flag-service.feature-flags.svc.cluster.local:8002"
+  TARGETING_SERVICE_URL: "http://targeting-service.feature-flags.svc.cluster.local:8003"
+
+  # AWS — configurações não-sensíveis
+  AWS_REGION: "us-east-1"
+  AWS_SQS_URL: "https://sqs.us-east-1.amazonaws.com/653509254250/evaluation-service-sqs"
+  AWS_DYNAMODB_TABLE: "analytics-service-table"

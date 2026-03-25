@@ -1,0 +1,145 @@
+services:
+  # =============================================================
+  # Databases
+  # =============================================================
+
+  postgres-auth:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-auth-data:/var/lib/postgresql/data
+      - ./auth-service/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d auth_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgres-apps:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: flags_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-apps-data:/var/lib/postgresql/data
+      - ./flag-service/db/init.sql:/init-sql/flags.sql:ro
+      - ./targeting-service/db/init.sql:/init-sql/targeting.sql:ro
+      - ./docker/init-postgres-apps.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d flags_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:3
+    environment:
+      SERVICES: sqs,dynamodb
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - localstack-data:/var/lib/localstack
+      - ./docker/init-localstack.sh:/etc/localstack/init/ready.d/init.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  # =============================================================
+  # Microservices
+  # =============================================================
+
+  auth-service:
+    build: ./auth-service
+    ports:
+      - "8001:8001"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres-auth:5432/auth_db
+      MASTER_KEY: ${MASTER_KEY}
+      PORT: "8001"
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+
+  flag-service:
+    build: ./flag-service
+    ports:
+      - "8002:5000"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres-apps:5432/flags_db
+      AUTH_SERVICE_URL: http://auth-service:8001
+    depends_on:
+      postgres-apps:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+
+  targeting-service:
+    build: ./targeting-service
+    ports:
+      - "8003:5000"
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres-apps:5432/targeting_db
+      AUTH_SERVICE_URL: http://auth-service:8001
+    depends_on:
+      postgres-apps:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+
+  evaluation-service:
+    build: ./evaluation-service
+    ports:
+      - "8004:8004"
+    environment:
+      REDIS_URL: redis://redis:6379
+      FLAG_SERVICE_URL: http://flag-service:5000
+      TARGETING_SERVICE_URL: http://targeting-service:5000
+      AWS_SQS_URL: http://localstack:4566/000000000000/minha-fila
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+      SERVICE_API_KEY: ${SERVICE_API_KEY}
+      PORT: "8004"
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      flag-service:
+        condition: service_started
+      targeting-service:
+        condition: service_started
+
+  analytics-service:
+    build: ./analytics-service
+    ports:
+      - "8005:5000"
+    environment:
+      AWS_REGION: us-east-1
+      AWS_SQS_URL: http://localstack:4566/000000000000/minha-fila
+      AWS_DYNAMODB_TABLE: ${AWS_DYNAMODB_TABLE}
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_ENDPOINT_URL: http://localstack:4566
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+volumes:
+  postgres-auth-data:
+  postgres-apps-data:
+  localstack-data:
